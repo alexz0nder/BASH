@@ -202,7 +202,7 @@ function main {
             #  send archive to the user
 
             ## generate and add a new rule into iptables
-            echo "and the latest thind I have to do is adding an iptables rule"
+            echo "and the latest thing I have to do is to add an iptables rule"
             echo "next string will be added to the top of iptables table: "
             echo "iptables -I FORWARD 1 -s 10.10.10.$free_user_ip/32 -d 10.66.59.0/24 -p tcp -m tcp --dport 22 -j ACCEPT"
             echo "BUT! Which is more important the active iptables file will be copied to iptables.$(date +"%d%m%Y").bkp file"
