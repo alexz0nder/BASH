@@ -269,66 +269,8 @@ function main {
             remove_old_user
             exit 0
         else
-<<<<<<< HEAD
             add_new_user
             exit 0
-=======
-            echo "So. There is neither already generated certificate nor ccd configured file for the user."
-            echo "Searching for free IP..."
-            find_free_ip
-            free_user_ip=$last_ip
-            echo "free IP found - 10.10.10.$free_user_ip"
-            echo "Writing CCD file for pushing static IP for the $user_name user"
-            echo "ifconfig-push 10.10.10.$free_user_ip 10.10.10.$(($free_user_ip-1)) going to be stored in ${ccd_dir}/${user_name}"
-            read -p "Are you sure? (Yes/No): " YesNo
-            if [ $YesNo == "Yes" ] then
-                touch $ccd_dir/$user_name
-                echo "ifconfig-push 10.10.10.${free_user_ip} 10.10.10.$((${free_user_ip}-1))" > ${ccd_dir}/${user_name}
-            fi
-
-            ## Make certificates for the new user
-            #  generate_new_cert
-            echo "Going to generate certs for the ${user_name} user"
-            read -p "Are you sure? (Yes/No): " YesNo
-            if [ $YesNo == "Yes" ] then
-                echo "Generating keys..."
-                cd ${easy_rsa_dir}
-                . ./vars
-                ./pkitool $user_name
-                echo "Certs are succesfully generated. "
-                certificates_are_created=1
-            fi
-
-            ## create archive
-            if [ $certificates_are_created == 1 ] then
-                echo "Now I am going to create an archive that you could send to $user_name"
-                mkdir -p ./keys/$user_name
-                cp /etc/openvpn/keys/ca.crt ./keys/$user_name/
-                cp /etc/openvpn/keys/ca.key ./keys/$user_name/
-                cp /etc/openvpn/easy-rsa/keys/$user_name.crt ./keys/$user_name/
-                cp /etc/openvpn/easy-rsa/keys/$user_name.key ./keys/$user_name/
-                tar -zcvf ./keys/$user_name.tar.gz ./keys/$user_name
-                rm -rf ./keys/$user_name
-                echo "Archive $user_name.tar.gz is created. You can get it at $(pwd)/keys directory."
-                echo ""
-
-            fi
-
-            ## TODO:
-            #  send archive to the user
-
-            ## generate and add a new rule into iptables
-            echo "and the latest thing I have to do is to add an iptables rule"
-            echo "next string will be added to the top of iptables table: "
-            echo "iptables -I FORWARD 1 -s 10.10.10.$free_user_ip/32 -d 10.66.59.0/24 -p tcp -m tcp --dport 22 -j ACCEPT"
-            echo "BUT! Which is more important the active iptables file will be copied to iptables.$(date +"%d%m%Y").bkp file"
-            read -p "Are you sure? (Yes/No): " YesNo
-            if [ $YesNo == "Yes" ] then
-                iptables-save > /etc/sysconfig/iptables.$(date +"%d%m%Y").bkp
-                iptables -I FORWARD 1 -s 10.10.10.$free_user_ip/32 -d 10.66.59.0/24 -p tcp -m tcp --dport 22 -j ACCEPT
-                iptables-save > /etc/sysconfig/iptables
-            fi
->>>>>>> 53e2062ef9e592522ffb9abc0c624a9428eead0f
         fi
     fi
 }
