@@ -44,6 +44,7 @@ function find_free_ip {
             break
         fi
     done < "$filename"
+    rm ./current_ips.txt
 }
 
 function ask_Yes_No() {
