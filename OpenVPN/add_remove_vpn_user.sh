@@ -8,6 +8,9 @@ function assign_variables {
     openvpn_home_dir="/etc/openvpn"
     easy_rsa_dir="$openvpn_home_dir/easy-rsa"
     ccd_dir="$openvpn_home_dir/ccd"
+    sript_dir=$(pwd)
+
+
 }
 
 function find_free_ip {
@@ -52,12 +55,12 @@ function generate_new_cert {
     days_to_the_end=$(($cert_unix_date-$today_unix_date))
     days_to_the_end=$(($days_to_the_end/86400))
 
-    echo $cert_unix_date $today_unix_date $days_to_the_end 
+    echo $cert_unix_date $today_unix_date $days_to_the_end
     if [[ $days_to_the_end -le 0 ]]; then
         # the case when the user already has a generated key but it is already expired
         #
         echo "And it's is already expired"
-        printf "Would you like to renew it? "
+        printf "Would you like to renew it? [Y/n]"
         read user_answer
         if [[ $user_answer == "Y" ]] || [[  $user_answer == "y" ]]; then
             cd "$easy_rsa_dir"
@@ -89,7 +92,7 @@ function generate_new_cert {
         # the case when the user already has certificates and they aren't expired yet
         #
         echo "Do you really want to revoke access for this user?"
-        printf "Y/n [ENTER]: "
+        printf "[Y/n]: "
         read user_answer
         if [[ $user_answer == "Y" ]] || [[  $user_answer == "y" ]]; then
             echo "Revoking keys for user $user_name"
@@ -111,107 +114,163 @@ function generate_new_cert {
     fi
 }
 
+function ask_Yes_No() {
+  read -p "$1 (Are you sure? [y]es or [N]o): " -n 1 -r
+  if [[ $REPLY =~ ^(yes|y|Y| ) ]] || [[ -z $REPLY ]]; then
+      echo 1
+  else
+      echo 0
+  fi
+}
+
+function remove_old_user() {
+    echo "there are already generated certificates and ccd file, so it might be you wanted to revoke certs for the user and clean all ends ? :)"
+    if [ $(ask_Yes_No) == "1" ]; then
+        ## Remove IPtables rule
+        #
+        user_ip_adress=$(cat ${ccd_dir}/${user_name} | cut -d' ' -f2)
+        iptables_string=$(iptables -L --line-numbers | grep $user_ip_adress)
+        iptables_line_number=$(echo "$iptables_string" | cut -d' ' -f1)
+        echo "Okay."
+        echo "Removing iptables line N $iptables_line_number:"
+        echo $iptables_string
+        if [ $(ask_Yes_No) == "1" ]; then
+            iptables -D FORWARD $iptables_line_number
+            iptables-save > /etc/sysconfig/iptables
+            echo ""
+            echo "iptables rule was succesfully deleted"
+            echo ""
+        else
+            echo "Okay. But I had to ask just in case if you don't want to :)"
+            echo ""
+        fi
+
+        ## Delete CCD file
+        #
+        echo "Now I am going to remove the user's CCD file"
+        if [ $(ask_Yes_No) == "1" ]; then
+            rm -f ${ccd_dir}/${user_name}
+            echo ""
+            echo "the CCD file was succesfully deleted"
+        else
+            echo "Okay. But I had to ask just in case if you don't want to :)"
+            echo ""
+        fi
+
+        ## Revoke certs
+        #
+        echo "How about to revoke keys... ?"
+        if [ $(ask_Yes_No) == "1" ]; then
+            echo ""
+            cd ${easy_rsa_dir}
+            . ./vars
+            ./revoke-full ${user_name}
+            if ! [ -e ./revoked ]; then
+                mkdir ./revoked
+            fi
+            mv ./keys/${user_name}* ./revoked/
+            echo ""
+        else
+            echo "Okay. But I had to ask just in case if you don't want to :)"
+            echo ""
+        fi
+    else
+        echo "Okay. In case you change your mind just run this script again."
+        echo ""
+    fi
+}
+
+function add_new_user() {
+    echo "So. There is neither already generated certificate nor ccd configured file for the user."
+    echo "Searching for free IP..."
+    echo ""
+    find_free_ip
+    free_user_ip=$last_ip
+
+    echo "free IP found - 10.10.10.$free_user_ip"
+    echo "Going to write CCD file for pushing static IP for the $user_name user with next content:"
+    echo "ifconfig-push 10.10.10.$free_user_ip 10.10.10.$(($free_user_ip-1)) going to be stored in ${ccd_dir}/${user_name}"
+    echo ""
+    if [ $(ask_Yes_No) == "1" ]; then
+        touch $ccd_dir/$user_name
+        echo "ifconfig-push 10.10.10.${free_user_ip} 10.10.10.$((${free_user_ip}-1))" > ${ccd_dir}/${user_name}
+        echo ""
+    else
+         echo "Okay. If you won't create the CCD file then exiting because there is no need to make neither iptables rules nor certificates... "
+         exit 0
+    fi
+
+    ## Make certificates for the new user
+    #  generate_new_cert
+    echo "Going to generate certs for the ${user_name} user"
+    if [ $(ask_Yes_No) == "1" ]; then
+        echo "Generating keys..."
+        cd ${easy_rsa_dir}
+        . ./vars
+        export KEY_EMAIL=$user_email
+        ./pkitool $user_name
+        echo "Certs are succesfully generated. "
+        certificates_are_created="True"
+    else
+        echo "Okay. But I had to ask just in case if you don't want to :)"
+    fi
+
+    ## create archive
+    if [[ $certificates_are_created == "True" ]]; then
+        echo "Now I am going to create an archive that you could send to $user_name"
+        cd $sript_dir
+        mkdir -p ./keys/$user_name
+        cp /etc/openvpn/keys/ca.crt ./keys/$user_name/
+        cp /etc/openvpn/keys/ta.key ./keys/$user_name/
+        cp /etc/openvpn/easy-rsa/keys/$user_name.crt ./keys/$user_name/
+        cp /etc/openvpn/easy-rsa/keys/$user_name.key ./keys/$user_name/
+        tar -zcvf ./keys/$user_name.tar.gz ./keys/$user_name
+        rm -rf ./keys/$user_name
+
+        if [ -e "./keys/$user_name.tar.gz" ]; then
+            echo "Archive $user_name.tar.gz is created. You can get it at sript_dir directory."
+            echo ""
+        else
+            echo "Something went wrong. Archive $user_name.tar.gz at $script_dir/keys wasn't made."
+            echo ""
+        fi
+    else
+        echo "Okay. But I had to ask just in case if you don't want to :)"
+    fi
+
+    ## TODO:
+    #  send archive to the user
+
+    ## generate and add a new rule into iptables
+    echo "And the latest thind I have to do is to add an iptables rule."
+    echo "Next string will be added to the top of iptables table: "
+    echo "iptables -I FORWARD 1 -s 10.10.10.$free_user_ip/32 -d 10.66.59.0/24 -p tcp -m tcp --dport 22 -j ACCEPT"
+    echo "And, which is also important, the active iptables going to be saved into the iptables.$(date +"%d%m%Y").bkp file"
+    if [ $(ask_Yes_No) == "1" ]; then
+        iptables-save > /etc/sysconfig/iptables.$(date +"%d%m%Y").bkp
+        iptables -I FORWARD 1 -s 10.10.10.$free_user_ip/32 -d 10.66.59.0/24 -p tcp -m tcp --dport 22 -j ACCEPT
+        iptables-save > /etc/sysconfig/iptables
+        echo ""
+    else
+        echo "Okay. But I had to ask just in case if you don't want to :)"
+        echo ""
+    fi
+}
 
 function main {
     if [ $# -eq 0 ]; then
         usage
     else
-        echo "Firstly we are going to split your email to name and domain and here what we have found:"
+        echo "Firstly we are going to split that email to a name and a domain:"
         assign_variables $@
         echo "name=${user_name} AT domain=${user_domain}"
+        echo ""
         if [ -e "${easy_rsa_dir}/keys/${user_name}.crt" ] && [ -e "${ccd_dir}/${user_name}" ]; then
-            echo "there are already generated certificates and ccd file, so it might be you wanted to revoke certs for the user and clean all ends ? :)"
-            read -p "If you agree to revoke certs of the ${user_name} user and remove : " YesNo
-            if [ $YesNo == "YES" ] then
-                ## Remove IPtables rule
-                user_ip_adress=$(cat /etc/openvpn/ccd/alexander.baklanov | cut -d' ' -f2)
-                iptables_string=$(iptables -L --line-numbers | grep $user_ip_adress)
-                iptables_line_number=$(echo "$iptables_string" | cut -d' ' -f1)
-                echo "Okay."
-                echo "Removing iptables line #$iptables_line_number:"
-                echo $iptables_string
-                read -p "Are you sure? (Yes/No): " YesNo
-                if [ $YesNo == "Yes" ] then
-                    iptables -D FORWARD $iptables_line_number
-                    echo "iptables rule was succesfully deleted"
-                fi
-
-                ## Delete CCD file
-                #
-                echo "Now I am going to remove the user's CCD file"
-                read -p "Are you sure? (Yes/No): " YesNo
-                if [ $YesNo == "Yes" ] then
-                    rm -f ${ccd_dir}/${user_name}
-                    echo "the CCD file was succesfully deleted"
-                fi
-
-                ## Revoke certs
-                #
-                echo "Revoking keys..."
-                read -p "Are you sure? (Yes/No): " YesNo
-                if [ $YesNo == "Yes" ] then
-                    cd ${easy_rsa_dir}
-                    . ./vars
-                    ./revoke-full 
-                fi
-            fi
-
+            remove_old_user
+            exit 0
         else
-            echo "So. There is neither already generated certificate nor ccd configured file for the user."
-            echo "Searching for free IP..."
-            find_free_ip
-            free_user_ip=$last_ip
-            echo "free IP found - 10.10.10.$free_user_ip"
-            echo "Writing CCD file for pushing static IP for the $user_name user"
-            echo "ifconfig-push 10.10.10.$free_user_ip 10.10.10.$(($free_user_ip-1)) going to be stored in ${ccd_dir}/${user_name}"
-            read -p "Are you sure? (Yes/No): " YesNo
-            if [ $YesNo == "Yes" ] then
-                touch $ccd_dir/$user_name
-                echo "ifconfig-push 10.10.10.${free_user_ip} 10.10.10.$((${free_user_ip}-1))" > ${ccd_dir}/${user_name}
-            fi
-
-            ## Make certificates for the new user
-            #  generate_new_cert
-            echo "Going to generate certs for the ${user_name} user"
-            read -p "Are you sure? (Yes/No): " YesNo
-            if [ $YesNo == "Yes" ] then
-                echo "Generating keys..."
-                cd ${easy_rsa_dir}
-                . ./vars
-                ./pkitool $user_name
-                echo "Certs are succesfully generated. "
-                certificates_are_created=1
-            fi
-
-            ## create archive
-            if [ $certificates_are_created == 1 ] then
-                echo "Now I am going to create an archive that you could send to $user_name"
-                mkdir -p ./keys/$user_name
-                cp /etc/openvpn/keys/ca.crt ./keys/$user_name/
-                cp /etc/openvpn/keys/ca.key ./keys/$user_name/
-                cp /etc/openvpn/easy-rsa/keys/$user_name.crt ./keys/$user_name/
-                cp /etc/openvpn/easy-rsa/keys/$user_name.key ./keys/$user_name/
-                tar -zcvf ./keys/$user_name.tar.gz ./keys/$user_name
-                rm -rf ./keys/$user_name
-                echo "Archive $user_name.tar.gz is created. You can get it at $(pwd)/keys directory."
-                echo ""
-
-            fi
-
-            ## TODO:
-            #  send archive to the user
-
-            ## generate and add a new rule into iptables
-            echo "and the latest thind I have to do is adding an iptables rule"
-            echo "next string will be added to the top of iptables table: "
-            echo "iptables -I FORWARD 1 -s 10.10.10.$free_user_ip/32 -d 10.66.59.0/24 -p tcp -m tcp --dport 22 -j ACCEPT"
-            echo "BUT! Which is more important the active iptables file will be copied to iptables.$(date +"%d%m%Y").bkp file"
-            read -p "Are you sure? (Yes/No): " YesNo
-            if [ $YesNo == "Yes" ] then
-                iptables-save > /etc/sysconfig/iptables.$(date +"%d%m%Y").bkp
-                iptables -I FORWARD 1 -s 10.10.10.$free_user_ip/32 -d 10.66.59.0/24 -p tcp -m tcp --dport 22 -j ACCEPT
-                iptables-save > /etc/sysconfig/iptables
-            fi
+            add_new_user
+            exit 0
         fi
     fi
 }
